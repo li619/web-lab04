@@ -6,6 +6,7 @@ class GameOverScene extends Phaser.Scene {
     init(data) {
         this.score = data.score;
         this.win = data.win || false;
+        this.canRetry = data.canRetry;
     }
 
     create() {
@@ -27,29 +28,37 @@ class GameOverScene extends Phaser.Scene {
             fontFamily: 'Arial'
         }).setOrigin(0.5);
 
-        // 重新开始按钮
-        const restartButton = this.add.text(400, 400, '再玩一次', {
-            fontSize: '32px',
-            fill: '#fff',
-            backgroundColor: '#2196f3',
-            padding: { x: 20, y: 10 },
-            borderRadius: 5
-        })
-        .setOrigin(0.5)
-        .setInteractive();
+        // 只有在允许重试时才显示重试按钮
+        if (this.canRetry) {
+            const restartButton = this.add.text(400, 400, '再玩一次', {
+                fontSize: '32px',
+                fill: '#fff',
+                backgroundColor: '#2196f3',
+                padding: { x: 20, y: 10 },
+                borderRadius: 5
+            })
+            .setOrigin(0.5)
+            .setInteractive();
 
-        // 添加按钮交互效果
-        restartButton.on('pointerover', () => {
-            restartButton.setStyle({ backgroundColor: '#1976d2' });
-        });
+            restartButton.on('pointerover', () => {
+                restartButton.setStyle({ backgroundColor: '#1976d2' });
+            });
 
-        restartButton.on('pointerout', () => {
-            restartButton.setStyle({ backgroundColor: '#2196f3' });
-        });
+            restartButton.on('pointerout', () => {
+                restartButton.setStyle({ backgroundColor: '#2196f3' });
+            });
 
-        restartButton.on('pointerdown', () => {
-            console.log('重新开始按钮被点击');
-            this.scene.start('GameScene');
-        });
+            restartButton.on('pointerdown', () => {
+                console.log('重新开始按钮被点击');
+                this.scene.start('GameScene');
+            });
+        } else {
+            // 显示游戏真正结束的消息
+            this.add.text(400, 400, '游戏结束，感谢游玩！', {
+                fontSize: '24px',
+                fill: '#ff4081',
+                fontFamily: 'Arial'
+            }).setOrigin(0.5);
+        }
     }
 } 

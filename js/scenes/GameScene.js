@@ -6,6 +6,8 @@ class GameScene extends Phaser.Scene {
         this.level = 1;
         this.combo = 0;
         this.powerUps = [];
+        this.soundEnabled = false;
+        this.retryCount = 0;
     }
 
     preload() {
@@ -34,7 +36,7 @@ class GameScene extends Phaser.Scene {
         graphics.fillRoundedRect(0, 0, 100, 20, 10);
         graphics.generateTexture('paddle', 100, 20);
         
-        // 创建彩色砖块
+        // 创建彩色砖
         const colors = [0xff4081, 0x7c4dff, 0x00bcd4, 0x64dd17, 0xffd600];
         for (let i = 0; i < colors.length; i++) {
             graphics.clear();
@@ -58,6 +60,9 @@ class GameScene extends Phaser.Scene {
         powerUpGraphics.generateTexture('paddleExtend', 20, 20);
         
         powerUpGraphics.destroy();
+
+        // 确保在使用完后销毁图形对象
+        graphics.destroy();
 
         // 加载碰撞音效
         this.load.audio('hitSound', 'assets/penzhuang.mp3');
@@ -125,11 +130,64 @@ class GameScene extends Phaser.Scene {
         // 设置输入控制
         this.setupInput();
 
-        // 设置特效
-        this.setupEffects();
-
         // 初始化状态
         this.ballLaunched = false;
+
+        // 只在第一次点击后启用音效
+        this.input.once('pointerdown', () => {
+            this.soundEnabled = true;
+        });
+
+        // 修改道具和球拍的碰撞检测
+        this.physics.add.overlap(
+            this.paddle,
+            this.powerUps,
+            (paddle, powerUp) => {
+                const type = powerUp.getData('type');
+                
+                // 添加道具收集效果
+                this.tweens.add({
+                    targets: powerUp,
+                    scale: 1.5,
+                    alpha: 0,
+                    duration: 200,
+                    onComplete: () => {
+                        // 应用道具效果
+                        switch(type) {
+                            case 'speedUp':
+                                // 增加球速
+                                const currentVel = this.ball.body.velocity;
+                                const speed = Math.sqrt(currentVel.x * currentVel.x + currentVel.y * currentVel.y);
+                                const scale = Math.min(1.2, 400 / speed);  // 限制最大速度
+                                this.ball.body.setVelocity(
+                                    currentVel.x * scale,
+                                    currentVel.y * scale
+                                );
+                                break;
+                                
+                            case 'paddleExtend':
+                                // 增加球拍长度
+                                if (!paddle.getData('isExtended')) {
+                                    paddle.setScale(1.5, 1);
+                                    paddle.body.setSize(paddle.width * 1.5, paddle.height);
+                                    paddle.setData('isExtended', true);
+                                    
+                                    // 10秒后恢复
+                                    this.time.delayedCall(10000, () => {
+                                        paddle.setScale(1, 1);
+                                        paddle.body.setSize(paddle.width, paddle.height);
+                                        paddle.setData('isExtended', false);
+                                    });
+                                }
+                                break;
+                        }
+                        
+                        powerUp.destroy();
+                        this.powerUps = this.powerUps.filter(p => p !== powerUp);
+                    }
+                });
+            }
+        );
     }
 
     createUI() {
@@ -153,7 +211,7 @@ class GameScene extends Phaser.Scene {
             fontFamily: 'Arial'
         }).setOrigin(0.5, 0);
 
-        // 连击显���
+        // 连击显示
         this.comboText = this.add.text(400, 50, '', {
             fontSize: '24px',
             fill: '#ff4081',
@@ -162,25 +220,35 @@ class GameScene extends Phaser.Scene {
     }
 
     createCollisionEffect(x, y) {
-        const particles = this.add.particles(x, y, 'ball', {
-            speed: 100,
-            scale: { start: 0.2, end: 0 },
-            alpha: { start: 0.5, end: 0 },
-            lifespan: 200,
-            quantity: 5
+        // 创建碰撞波纹效果
+        const circle = this.add.circle(x, y, 10, 0xffffff, 0.5);
+        this.tweens.add({
+            targets: circle,
+            scale: 2,
+            alpha: 0,
+            duration: 200,
+            ease: 'Power2',
+            onComplete: () => circle.destroy()
         });
-
-        this.time.delayedCall(200, () => particles.destroy());
     }
 
     hitPaddle(ball, paddle) {
-        // 添加调试信息
-        console.log('Paddle collision detected');
-        
-        // 播放碰撞音效
-        if (this.hitSound) {
+        // 播放音效
+        if (this.soundEnabled && this.ballLaunched) {
             this.hitSound.play();
         }
+
+        // 移除球的形变效果，改用简单的闪烁
+        this.tweens.add({
+            targets: ball,
+            alpha: 0.8,
+            duration: 50,
+            yoyo: true,
+            ease: 'Linear'
+        });
+
+        // 添加碰撞特效
+        this.createCollisionEffect(ball.x, ball.y);
 
         // 计算碰撞点相对于球拍中心的位置
         const diff = ball.x - paddle.x;
@@ -192,7 +260,7 @@ class GameScene extends Phaser.Scene {
         const angle = normalizedDiff * maxAngle;
         const rad = Phaser.Math.DegToRad(angle);
         
-        // 计算新速度
+        // 计算速度
         const newVelX = baseSpeed * Math.sin(rad);
         const newVelY = -Math.abs(baseSpeed * Math.cos(rad));
         
@@ -205,8 +273,8 @@ class GameScene extends Phaser.Scene {
     }
 
     hitBrick(ball, brick) {
-        // 播放碰撞音效
-        if (this.hitSound) {
+        // 播放音效
+        if (this.soundEnabled) {
             this.hitSound.play();
         }
 
@@ -214,111 +282,149 @@ class GameScene extends Phaser.Scene {
         this.score += 10;
         this.scoreText.setText('分数: ' + this.score);
 
-        // 砖块消失动画
+        // 改进砖块消失动画
         this.tweens.add({
             targets: brick,
-            scaleX: 0,
-            scaleY: 0,
-            alpha: 0,
+            scaleX: 0,  // 水平方向缩小到0
+            scaleY: 0,  // 垂直方向缩小到0
+            alpha: 0,   // 逐渐透明
             duration: 200,
             ease: 'Power2',
             onComplete: () => {
                 brick.destroy();
+                
+                // 检查是否通关
+                if (this.bricks.countActive() === 0) {
+                    this.levelComplete();
+                }
             }
         });
 
-        // 检查是否通关
-        if (this.bricks.countActive() === 0) {
-            this.levelComplete();
+        // 添加破碎效果（不使用圆形，改用小方块）
+        for (let i = 0; i < 4; i++) {
+            const piece = this.add.rectangle(
+                brick.x + Phaser.Math.Between(-20, 20),
+                brick.y + Phaser.Math.Between(-10, 10),
+                10,
+                10,
+                brick.getData('color') !== undefined ? 
+                    [0xff4081, 0x7c4dff, 0x00bcd4, 0x64dd17, 0xffd600][brick.getData('color')] : 
+                    0xffffff
+            );
+
+            this.tweens.add({
+                targets: piece,
+                x: piece.x + Phaser.Math.Between(-50, 50),
+                y: piece.y + Phaser.Math.Between(30, 60),
+                alpha: 0,
+                scale: 0,
+                duration: 300,
+                ease: 'Power2',
+                onComplete: () => piece.destroy()
+            });
         }
     }
 
     createPowerUp(x, y) {
-        const types = ['speedUp', 'paddleExtend'];
-        const type = types[Phaser.Math.Between(0, types.length - 1)];
+        // 创建新的球
+        const newBall = this.physics.add.sprite(x, y, 'ball');
+        newBall.setData('isPowerBall', true);
         
-        const powerUp = this.physics.add.sprite(x, y, type);
-        powerUp.setData('type', type);
-        powerUp.body.setVelocity(0, 100);
-        
-        // 确保powerUps数组存在
+        // 设置物理属性
+        newBall.body.setCircle(8);
+        newBall.body.setBounce(1);
+        newBall.body.setCollideWorldBounds(true);
+        newBall.body.setVelocity(
+            Phaser.Math.Between(-150, 150),
+            150
+        );
+
+        // 添加碰撞检测
+        this.physics.add.collider(newBall, this.paddle, this.hitPaddle, null, this);
+        this.physics.add.collider(newBall, this.bricks, this.hitBrick, null, this);
+
+        // 简化闪烁效果
+        this.tweens.add({
+            targets: newBall,
+            alpha: 0.7,
+            yoyo: true,
+            repeat: -1,
+            duration: 400
+        });
+
+        // 确保 powerUps 数组存在
         if (!this.powerUps) {
             this.powerUps = [];
         }
-        
-        this.powerUps.push(powerUp);
 
-        // 添加自动销毁
+        this.powerUps.push(newBall);
+
+        // 5秒后销毁
         this.time.delayedCall(5000, () => {
-            if (powerUp && powerUp.active) {
-                powerUp.destroy();
-                this.powerUps = this.powerUps.filter(p => p !== powerUp);
+            if (newBall && newBall.active) {
+                newBall.destroy();
+                this.powerUps = this.powerUps.filter(p => p !== newBall);
             }
         });
-    }
-
-    collectPowerUp(paddle, powerUp) {
-        const type = powerUp.getData('type');
-        
-        switch(type) {
-            case 'speedUp':
-                this.ball.body.velocity.multiply(1.2);
-                break;
-            case 'paddleExtend':
-                if (!paddle.getData('isExtended')) {
-                    paddle.setScale(1.5, 1);
-                    paddle.setData('isExtended', true);
-                    this.time.delayedCall(10000, () => {
-                        paddle.setScale(1, 1);
-                        paddle.setData('isExtended', false);
-                    });
-                }
-                break;
-        }
-        
-        powerUp.destroy();
-        this.powerUps = this.powerUps.filter(p => p !== powerUp);
     }
 
     levelComplete() {
         this.level++;
         this.combo = 0;
         
-        // 显示过关动画
+        // 添加过关动画和特效
+        // 1. 闪烁背景
+        this.cameras.main.flash(500, 255, 255, 255);
+        
+        // 2. 显示过关文字
         const levelText = this.add.text(400, 300, `Level ${this.level}`, {
             fontSize: '64px',
-            fill: '#2196f3'
+            fill: '#2196f3',
+            fontFamily: 'Arial',
+            fontStyle: 'bold'
         }).setOrigin(0.5);
 
+        // 3. 添加文字动画
         this.tweens.add({
             targets: levelText,
-            scale: 1.5,
-            alpha: 0,
+            scale: { from: 0.5, to: 1.5 },
+            alpha: { from: 1, to: 0 },
             duration: 1000,
             ease: 'Power2',
             onComplete: () => {
                 levelText.destroy();
-                this.resetLevel();
+                this.startNextLevel();
+            }
+        });
+
+        // 4. 添加粒子庆祝效果
+        const particles = this.add.particles(400, 300, 'ball', {
+            speed: { min: 200, max: 400 },
+            angle: { min: 0, max: 360 },
+            scale: { start: 0.4, end: 0 },
+            alpha: { start: 1, end: 0 },
+            lifespan: 1000,
+            quantity: 2,
+            frequency: 50,
+            blendMode: 'ADD'
+        });
+
+        // 确保粒子系统在动画结束后被销毁
+        this.time.delayedCall(1000, () => {
+            if (particles && particles.active) {
+                particles.destroy();
             }
         });
     }
 
-    resetLevel() {
+    startNextLevel() {
         // 重置球和球拍
         this.resetBall();
         
         // 清除所有砖块和道具
         this.bricks.clear(true, true);
-        
-        // 安全地清除道具
-        if (this.powerUps) {
-            this.powerUps.forEach(p => {
-                if (p && p.active) {
-                    p.destroy();
-                }
-            });
-            this.powerUps = [];
-        }
+        this.powerUps.forEach(p => p.destroy());
+        this.powerUps = [];
         
         // 创建新的砖块布局
         this.createBricks();
@@ -385,18 +491,6 @@ class GameScene extends Phaser.Scene {
         }).setOrigin(0.5);
     }
 
-    setupEffects() {
-        // 球的拖尾效果
-        this.ballTrail = this.add.particles(0, 0, 'ball', {
-            speed: 100,
-            scale: { start: 0.2, end: 0 },
-            alpha: { start: 0.3, end: 0 },
-            lifespan: 200,
-            blendMode: 'ADD',
-            follow: this.ball
-        });
-    }
-
     launchBall() {
         if (!this.ballLaunched) {
             this.ballLaunched = true;
@@ -425,7 +519,7 @@ class GameScene extends Phaser.Scene {
         }
 
         // 修改掉落检测
-        if (this.ball.y > this.paddle.y + 20) {  // 确保球真正掉落才减命
+        if (this.ball.y > this.paddle.y + 20) {
             this.lives--;
             if (this.lives > 0) {
                 this.livesText.setText('❤️'.repeat(this.lives));
@@ -443,7 +537,19 @@ class GameScene extends Phaser.Scene {
                     this.launchBall();
                 });
             } else {
-                this.scene.start('GameOverScene', { score: this.score });
+                // 检查重试次数
+                if (this.retryCount < 1) {
+                    this.retryCount++;
+                    this.scene.start('GameOverScene', { 
+                        score: this.score,
+                        canRetry: true 
+                    });
+                } else {
+                    this.scene.start('GameOverScene', { 
+                        score: this.score,
+                        canRetry: false 
+                    });
+                }
             }
         }
 
@@ -474,6 +580,35 @@ class GameScene extends Phaser.Scene {
                 console.log(`Ball near paddle: x=${this.ball.x}, y=${this.ball.y}`);
                 console.log(`Paddle position: x=${this.paddle.x}, y=${this.paddle.y}`);
             }
+        }
+
+        // 修复球的更新逻辑
+        if (this.powerUps && Array.isArray(this.powerUps)) {
+            this.powerUps = this.powerUps.filter(ball => {
+                if (!ball || !ball.active || !ball.body) {
+                    return false;
+                }
+
+                if (ball.y > 600) {
+                    ball.destroy();
+                    return false;
+                }
+
+                // 确保球速度保持在合理范围
+                const velocity = ball.body.velocity;
+                const speed = Math.sqrt(velocity.x * velocity.x + velocity.y * velocity.y);
+                
+                if (speed < 200 || speed > 400) {
+                    const targetSpeed = 300;
+                    const scale = targetSpeed / speed;
+                    ball.body.setVelocity(
+                        velocity.x * scale,
+                        velocity.y * scale
+                    );
+                }
+
+                return true;
+            });
         }
     }
 
