@@ -1,0 +1,16 @@
+breakout-game/
+  ├── index.html
+  ├── css/
+  │   └── style.css
+  ├── js/
+  │   ├── game.js
+  │   └── scenes/
+  │       ├── GameScene.js
+  │       ├── MenuScene.js
+  │       └── GameOverScene.js
+  └── assets/
+      ├── ball.png
+      ├── paddle.png
+      ├── brick.png
+      ├── background.png
+      └── button.png 
